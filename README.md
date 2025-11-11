@@ -265,9 +265,15 @@ API поддерживает расширенные возможности дл�
 
 4. **Проверьте работу API:**
    
-   Откройте в браузере: `http://localhost:3000/api`
+   Todos: `http://localhost:3000/api/todos`
+   ![1](image.png)
    
    Документация Swagger: `http://localhost:3000/api-docs`
+   ![2](image-1.png)
+
+   Categories: `http://localhost:3000/api/categories`
+   ![3](image-2.png)
+   
 
 ### Доступные скрипты
 
