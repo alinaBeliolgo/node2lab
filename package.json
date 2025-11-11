@@ -1,24 +1,31 @@
 {
-  "name": "todo-app",
+  "name": "todo-api",
   "version": "1.0.0",
+  "description": "Todo API with Express.js and SQLite",
+  "main": "app.js",
   "type": "module",
-  "main": "src/app.js",
   "scripts": {
-    "start": "node src/app.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node app.js",
+    "dev": "nodemon app.js",
+    "migrate": "node script/migrate.js"
   },
-  "keywords": [],
+  "keywords": [
+    "todo",
+    "api",
+    "express",
+    "sqlite",
+    "swagger"
+  ],
   "author": "",
   "license": "ISC",
-  "description": "",
   "dependencies": {
-    "dotenv": "^17.2.3",
-    "express": "^5.1.0",
-    "pg": "^8.16.3",
-    "pug": "^3.0.3",
-    "sequelize": "^6.37.7"
+    "express": "^4.18.2",
+    "dotenv": "^16.0.3",
+    "better-sqlite3": "^8.7.0",
+    "swagger-ui-express": "^4.6.3",
+    "swagger-jsdoc": "^6.2.8"
   },
   "devDependencies": {
-    "sequelize-cli": "^6.6.3"
+    "nodemon": "^2.0.22"
   }
 }
