@@ -1,204 +1,285 @@
 # Лабораторная работа №2. Работа с базой данных
 
-## Цель
+## Цель работы
 
 - Спроектировать и реализовать REST API с двумя связанными сущностями: категории и задачи (1:N).
-- Использовать PostgreSQL и ORM Sequelize для миграций, моделей, связей и валидации.
-- Реализовать CRUD для категорий и задач.
-- Возвращать ответы и ошибки только в формате JSON (без HTML).
+- Использовать SQLite в качестве СУБД с библиотекой better-sqlite3 для работы с базой данных.
+- Реализовать полноценный CRUD для категорий и задач с валидацией данных.
+- Добавить документацию API с помощью Swagger.
+- Обеспечить возврат ответов только в формате JSON.
 
-## Стек и версия окружения
+## Технологический стек
 
-- Node.js + Express
-- PostgreSQL
-- Sequelize (ORM)
-- dotenv для конфигурации
+- **Backend**: Node.js + Express.js
+- **База данных**: SQLite
+- **Библиотека для работы с БД**: better-sqlite3
+- **Документация API**: Swagger UI Express + swagger-jsdoc
+- **Конфигурация**: dotenv
 
-Файлы в репозитории (основные):
-
-- `app.js` — запуск сервера, подключение к БД, регистрация роутов, настройка связей.
-- `config/config.js` — конфигурация Sequelize по окружениям из `.env`.
-- `models/` — фабрики моделей `Category` и `Todo`, инициализация `sequelize`.
-- `migrations/` — миграции для создания таблиц `categories` и `todos`.
-- `controllers/` — бизнес-логика и валидации на уровне API.
-- `routes/` — REST-маршруты для категорий и задач.
-
-## Схема базы данных
-
-Связь: одна категория имеет много задач (1:N). В таблице `todos` хранится внешний ключ `category_id` на `categories.id`.
-
-Таблица `categories`:
-
-- `id` INTEGER PK, auto-increment
-- `name` VARCHAR(100) NOT NULL
-- `created_at` TIMESTAMP NOT NULL
-- `updated_at` TIMESTAMP NOT NULL
-
-Таблица `todos`:
-
-- `id` UUID PK, по умолчанию генерируется в БД через `gen_random_uuid()`
-- `title` TEXT NOT NULL, валидация длины [2..120]
-- `completed` BOOLEAN DEFAULT false
-- `category_id` INTEGER NULL, FK → `categories(id)`, ON UPDATE CASCADE, ON DELETE SET NULL
-- `due_date` TIMESTAMP NULL
-- `created_at` TIMESTAMP NOT NULL
-- `updated_at` TIMESTAMP NOT NULL
-
-Примечание: генерация UUID в миграции использует `gen_random_uuid()`. Для PostgreSQL требуется расширение `pgcrypto`:
+## Структура проекта
 
 ```
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+├── app.js                 - главный файл приложения, запуск сервера
+├── package.json          - зависимости и скрипты проекта
+├── db/
+│   ├── db.js            - подключение и функции для работы с SQLite
+│   └── db.sqlite        - файл базы данных SQLite
+├── model/
+│   ├── category.js      - модель категорий с функциями CRUD
+│   └── todo.js          - модель задач с функциями CRUD
+├── controller/
+│   ├── categoryController.js - контроллеры для категорий
+│   └── todoController.js     - контроллеры для задач
+├── router/
+│   ├── categoryRouter.js - маршруты для категорий
+│   ├── todoRouter.js     - маршруты для задач
+│   └── swaggerD.js       - документация Swagger
+├── utils/
+│   └── create.js         - создание таблиц БД
+├── swagger/
+│   └── swagger.js        - конфигурация Swagger
+└── script/
+    └── migrate.js        - скрипт миграций
 ```
 
-## Миграции
+## Проектирование базы данных
 
-Файлы:
+Реализована связь один-ко-многим (1:N): одна категория может содержать множество задач. В таблице `todos` хранится внешний ключ `category_id`, ссылающийся на `categories.id`.
 
-- `migrations/20251028090000-create-categories.js`
-- `migrations/20251028090500-create-todos.js`
+### Таблица `categories`
 
-Фрагмент (создание `todos`):
-
-```js
-// migrations/20251028090500-create-todos.js
-await queryInterface.createTable('todos', {
-	id: {
-		allowNull: false,
-		primaryKey: true,
-		type: Sequelize.UUID,
-		defaultValue: Sequelize.literal('gen_random_uuid()')
-	},
-	title: { type: Sequelize.TEXT, allowNull: false },
-	completed: { type: Sequelize.BOOLEAN, defaultValue: false },
-	category_id: {
-		type: Sequelize.INTEGER,
-		references: { model: 'categories', key: 'id' },
-		onUpdate: 'CASCADE',
-		onDelete: 'SET NULL'
-	},
-	due_date: { type: Sequelize.DATE },
-	created_at: { allowNull: false, type: Sequelize.DATE },
-	updated_at: { allowNull: false, type: Sequelize.DATE }
-});
+```sql
+CREATE TABLE categories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
-В текущей сборке приложение также выполняет `sequelize.sync()` при старте (см. `app.js`), что создаёт таблицы при их отсутствии.
+### Таблица `todos`
 
-## Модели и связи
-
-Инициализация в `models/index.js`:
-
-```js
-const Category = categoryFactory(sequelize, DataTypes);
-const Todo = todoFactory(sequelize, DataTypes);
+```sql
+CREATE TABLE todos (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL CHECK (length(title) BETWEEN 2 AND 120),
+    completed INTEGER DEFAULT 0 CHECK (completed IN (0, 1)),
+    category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+    due_date TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
-Определение моделей (ключевые поля и валидации):
 
-```js
-// models/todo.js
-title: {
-	type: DataTypes.TEXT,
-	allowNull: false,
-	validate: { len: { args: [2, 120], msg: 'Длина заголовка задачи должна быть от 2 до 120 символов' } }
+**Особенности реализации:**
+- Первичный ключ `id` в таблице `todos` представляет собой текстовую строку (генерируется с помощью crypto.randomUUID())
+- Поле `completed` хранится как INTEGER (0/1) вместо BOOLEAN для совместимости с SQLite
+- Установлена проверочная constraint для длины заголовка задачи (2-120 символов)
+- При удалении категории связанные задачи не удаляются, а поле `category_id` устанавливается в NULL
+
+## Инициализация базы данных
+
+Создание таблиц происходит автоматически при запуске приложения через функцию `createTables()` в файле `utils/create.js`:
+
+```javascript
+export function createTables() {
+    db.exec("PRAGMA foreign_keys = ON");
+
+    exec(`CREATE TABLE IF NOT EXISTS categories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name VARCHAR(100) NOT NULL UNIQUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`);
+
+    exec(`CREATE TABLE IF NOT EXISTS todos (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL CHECK (length(title) BETWEEN 2 AND 120),
+        completed INTEGER DEFAULT 0 CHECK (completed IN (0, 1)),
+        category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+        due_date TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`);
+
+    // Создание индексов для оптимизации запросов
+    exec(`CREATE INDEX IF NOT EXISTS idx_todos_category ON todos(category_id)`);
+    exec(`CREATE INDEX IF NOT EXISTS idx_todos_completed ON todos(completed)`);
 }
 ```
 
-Связи задаются при запуске в `app.js`:
+**Ключевые особенности:**
+- Включение поддержки внешних ключей: `PRAGMA foreign_keys = ON`
+- Использование `IF NOT EXISTS` для безопасного создания таблиц
+- Автоматическое создание индексов для часто используемых полей
 
-```js
-Todo.belongsTo(Category, { foreignKey: 'category_id', as: 'category' });
-Category.hasMany(Todo, { foreignKey: 'category_id', as: 'todos' });
+## Архитектура приложения
+
+### Модели данных
+
+Приложение использует модульную архитектуру с разделением на слои:
+
+**Модель категории (`model/category.js`):**
+```javascript
+// Основные функции для работы с категориями
+export function getAllCategories()        // Получить все категории
+export function getCategoryById(id)       // Получить категорию по ID
+export function createCategory({ name })   // Создать новую категорию
+export function updateCategory(id, data)  // Обновить категорию
+export function deleteCategory(id)        // Удалить категорию
+```
+
+**Модель задач (`model/todo.js`):**
+```javascript
+// Основные функции для работы с задачами
+export function getTodoById(id)           // Получить задачу по ID
+export function listTodos(filters)        // Получить список задач с фильтрацией
+export function createTodo(data)          // Создать новую задачу
+export function updateTodo(id, data)      // Обновить задачу
+export function deleteTodo(id)           // Удалить задачу
+export function toggleTodoCompletion(id)  // Переключить статус выполнения
+```
+
+### Валидация данных
+
+Валидация происходит на нескольких уровнях:
+
+1. **Уровень БД**: CHECK constraints в SQLite
+2. **Уровень моделей**: функция `normalizeDueDate()` для валидации дат
+3. **Уровень контроллеров**: проверка обязательных полей и бизнес-логики
+
+```javascript
+// Пример валидации даты
+function normalizeDueDate(value) {
+    if (value === null || value === undefined || value === "") {
+        return null;
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        throw Object.assign(new Error("Invalid due date"), { statusCode: 400 });
+    }
+    return date.toISOString();
+}
 ```
 
 ## REST API
 
-Базовый префикс: `/api`.
+Все эндпоинты используют базовый префикс `/api` и возвращают данные в формате JSON.
 
-### Категории
+### Основной эндпоинт
 
-- GET `/api/categories` — список всех категорий. Ответ: 200 + массив категорий.
-- GET `/api/categories/:id` — получить категорию по ID. Ответ: 200 / 404.
-- POST `/api/categories` — создать категорию. Тело: `{ "name": "string" }`. Ответ: 201.
-- PUT `/api/categories/:id` — изменить название категории. Ответ: 200 / 404.
-- DELETE `/api/categories/:id` — удалить категорию. Ответ: 204 / 404.
-
-Фрагмент контроллера:
-
-```js
-// controllers/categoryController.js
-const create = async (req, res) => {
-	const { name } = req.body;
-	if (!name) return res.status(400).json({ error: 'Поле name обязательно' });
-	const category = await Category.create({ name });
-	res.status(201).json(category);
-};
-```
-
-### Задачи (todos)
-
-- GET `/api/todos` — список задач (каждая задача содержит вложенный объект `category`). Ответ: объект `{ items, total, page, limit }`, код 200.
-- GET `/api/todos/:id` — получить задачу по ID (+вложенная `category`). Ответ: 200 / 404.
-- POST `/api/todos` — создать задачу. Тело: `{ title, category_id?, due_date? }`. Ответ: 201.
-- PUT `/api/todos/:id` — обновить поля `{ title?, completed?, category_id?, due_date? }`. Ответ: 200 / 404.
-- PATCH `/api/todos/:id/toggle` — переключить флаг `completed`. Ответ: 200 / 404.
-- DELETE `/api/todos/:id` — удалить задачу. Ответ: 204 / 404.
-
-Пример ответа элемента `todo`:
+- **GET `/api`** — информация о API и доступных эндпоинтах
 
 ```json
 {
-	"id": "2f7c7a9c-9c3b-4f0d-8baf-...",
-	"title": "Купить молоко",
-	"completed": false,
-	"due_date": null,
-	"created_at": "2025-10-28T09:00:00.000Z",
-	"updated_at": "2025-10-28T09:00:00.000Z",
-	"category_id": 3,
-	"category": { "id": 3, "name": "Покупки" }
+  "status": "ok",
+  "message": "Todo API",
+  "docs": "/api-docs",
+  "endpoints": {
+    "categories": "/api/categories",
+    "todos": "/api/todos"
+  }
 }
 ```
 
-## Как запустить
+### API категорий
 
-0) Node.js должен запускать ES-модули. Убедитесь, что в `package.json` задано `{ "type": "module" }` или используйте соответствующую конфигурацию сборки.
+| Метод | Эндпоинт | Описание | Тело запроса |
+|-------|----------|----------|--------------|
+| GET | `/api/categories` | Получить все категории | - |
+| GET | `/api/categories/:id` | Получить категорию по ID | - |
+| POST | `/api/categories` | Создать категорию | `{"name": "string"}` |
+| PUT | `/api/categories/:id` | Обновить категорию | `{"name": "string"}` |
+| DELETE | `/api/categories/:id` | Удалить категорию | - |
 
-1) Создайте БД PostgreSQL и при необходимости включите расширение `pgcrypto`:
+### API задач
 
+| Метод | Эндпоинт | Описание | Параметры |
+|-------|----------|----------|-----------|
+| GET | `/api/todos` | Получить список задач | `?page=1&limit=10&categoryId=1&search=text&sortBy=created_at&sortOrder=desc` |
+| GET | `/api/todos/:id` | Получить задачу по ID | - |
+| POST | `/api/todos` | Создать задачу | `{"title": "string", "category_id": number, "due_date": "ISO date"}` |
+| PUT | `/api/todos/:id` | Обновить задачу | `{"title": "string", "completed": boolean, "category_id": number, "due_date": "ISO date"}` |
+| PATCH | `/api/todos/:id/toggle` | Переключить статус выполнения | - |
+| DELETE | `/api/todos/:id` | Удалить задачу | - |
+
+### Возможности фильтрации и сортировки
+
+API поддерживает расширенные возможности для работы со списком задач:
+
+- **Пагинация**: параметры `page` и `limit`
+- **Фильтрация по категории**: параметр `categoryId`
+- **Поиск по заголовку**: параметр `search`
+- **Сортировка**: параметры `sortBy` (created_at, due_date, title) и `sortOrder` (asc, desc)
+
+### Пример ответа
+
+```json
+{
+  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "title": "Купить продукты",
+  "completed": false,
+  "due_date": "2025-11-15T10:00:00.000Z",
+  "created_at": "2025-11-12T08:30:00.000Z",
+  "updated_at": "2025-11-12T08:30:00.000Z",
+  "category": {
+    "id": 1,
+    "name": "Покупки"
+  }
+}
 ```
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-```
 
-2) Создайте `.env` в корне `src/` проекта со значениями для окружения `development`:
+## Установка и запуск
 
-```
-PORT=
-DB_USER=
-DB_PASSWORD=
-DB_NAME=
-DB_HOST=localhost
-```
+### Предварительные требования
 
-3) Установите зависимости и запустите сервер.
+- Node.js версии 16 или выше
+- npm (входит в состав Node.js)
 
-Вариант А (через node):
+### Шаги для запуска
 
-```
-node app.js
-```
+1. **Клонируйте репозиторий и перейдите в папку проекта:**
+   ```bash
+   git clone <repository-url>
+   cd src
+   ```
 
-При старте выполнится `sequelize.sync()` и при отсутствии таблиц они будут созданы.
+2. **Установите зависимости:**
+   ```bash
+   npm install
+   ```
 
-4) Тестовые запросы (PowerShell):
 
-```
-curl -Method GET http://localhost:3000/api/categories
-curl -Method POST http://localhost:3000/api/categories -ContentType 'application/json' -Body '{"name":"Покупки"}'
-curl -Method POST http://localhost:3000/api/todos -ContentType 'application/json' -Body '{"title":"Купить молоко","category_id":1}'
-curl -Method GET http://localhost:3000/api/todos
-```
+3. **Запустите приложение:**
+   
+   Для разработки с автоперезагрузкой:
+   ```bash
+   npm run dev
+   ```
+   
+   Для production:
+   ```bash
+   npm start
+   ```
 
-Примечание: если используем sequelize-cli для миграций, предварительно выполните миграции, затем запускайте сервер. В текущем проекте миграции присутствуют, но запуск возможен и без них за счёт `sync()`.
+4. **Проверьте работу API:**
+   
+   Откройте в браузере: `http://localhost:3000/api`
+   
+   Документация Swagger: `http://localhost:3000/api-docs`
+
+### Доступные скрипты
+
+- `npm start` — запуск продакшн версии
+- `npm run dev` — запуск в режиме разработки с nodemon
+
+
+### Особенности реализации
+
+- **Автоматическое создание БД**: При первом запуске автоматически создается файл `db/db.sqlite` и необходимые таблицы
+- **Swagger документация**: Автоматически генерируемая документация API доступна по адресу `/api-docs`
+- **Валидация данных**: Комплексная валидация на уровне БД и приложения
 
 
 ## Контрольные вопросы
